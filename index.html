@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Notion MCP</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+        }
+        .container {
+            background-color: white;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+        .input-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input[type="text"] {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 16px;
+        }
+        button {
+            background-color: #2ecc71;
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background-color: #27ae60;
+        }
+        .result {
+            margin-top: 20px;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            background-color: #f9f9f9;
+            white-space: pre-wrap;
+        }
+        .loading {
+            text-align: center;
+            margin: 20px 0;
+            display: none;
+        }
+        .error {
+            color: #e74c3c;
+            margin-top: 10px;
+        }
+        .examples {
+            margin-top: 30px;
+            padding: 15px;
+            background-color: #f0f8ff;
+            border-radius: 4px;
+        }
+        .examples h3 {
+            margin-top: 0;
+        }
+        .example {
+            margin-bottom: 10px;
+            cursor: pointer;
+            color: #3498db;
+        }
+        .example:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <h1>Notion MCP</h1>
+    
+    <div class="container">
+        <div class="input-group">
+            <label for="command">명령어 입력:</label>
+            <input type="text" id="command" placeholder="예: KT 데이터베이스에 test라는 하위 페이지 추가">
+        </div>
+        
+        <button id="submit">실행</button>
+        
+        <div class="loading" id="loading">처리 중...</div>
+        
+        <div class="result" id="result"></div>
+        
+        <div class="examples">
+            <h3>예시 명령어:</h3>
+            <div class="example" onclick="setCommand('KT 데이터베이스에 test라는 하위 페이지 추가')">KT 데이터베이스에 test라는 하위 페이지 추가</div>
+            <div class="example" onclick="setCommand('사용 가능한 데이터베이스 목록 보여줘')">사용 가능한 데이터베이스 목록 보여줘</div>
+            <div class="example" onclick="setCommand('새 데이터베이스 만들어줘 이름은 프로젝트')">새 데이터베이스 만들어줘 이름은 프로젝트</div>
+        </div>
+    </div>
+    
+    <script>
+        // API 서버 URL (개발 환경에서는 로컬 서버 사용)
+        const API_URL = 'http://localhost:5001/api';
+        
+        // 명령어 실행 함수
+        async function executeCommand(command) {
+            const loadingElement = document.getElementById('loading');
+            const resultElement = document.getElementById('result');
+            
+            try {
+                // 로딩 표시
+                loadingElement.style.display = 'block';
+                resultElement.textContent = '';
+                
+                // API 요청
+                const response = await fetch(`${API_URL}/process_command`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ command })
+                });
+                
+                const data = await response.json();
+                
+                // 결과 표시
+                if (data.error) {
+                    resultElement.innerHTML = `<div class="error">오류: ${data.error}</div>`;
+                } else {
+                    resultElement.textContent = data.result;
+                }
+            } catch (error) {
+                resultElement.innerHTML = `<div class="error">오류: ${error.message}</div>`;
+            } finally {
+                // 로딩 숨김
+                loadingElement.style.display = 'none';
+            }
+        }
+        
+        // 예시 명령어 설정 함수
+        function setCommand(command) {
+            document.getElementById('command').value = command;
+        }
+        
+        // 이벤트 리스너 등록
+        document.getElementById('submit').addEventListener('click', () => {
+            const command = document.getElementById('command').value.trim();
+            if (command) {
+                executeCommand(command);
+            }
+        });
+        
+        // Enter 키 이벤트 처리
+        document.getElementById('command').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                const command = e.target.value.trim();
+                if (command) {
+                    executeCommand(command);
+                }
+            }
+        });
+    </script>
+</body>
+</html> 
