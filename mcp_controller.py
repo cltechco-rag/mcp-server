@@ -26,56 +26,73 @@ class MCPController:
             
             # 사용자 입력의 의도 분석
             intent_result = self.openai_client.analyze_intent(command)
-            intent_data = json.loads(intent_result)
-            print(f"\n[디버그] 의도 분석 결과: {intent_data}")
+            print(f"\n[디버그] 의도 분석 결과(원본): {intent_result}")
             
-            if intent_data["intent"] == "notion_command":
-                # Notion 관련 명령 처리
-                parsed_command = self.openai_client.parse_notion_command(command)
-                print(f"\n[디버그] 명령 분석 결과(원본):\n{parsed_command}")
+            try:
+                intent_data = json.loads(intent_result)
+                print(f"\n[디버그] 의도 분석 결과(파싱됨): {intent_data}")
                 
-                try:
-                    # JSON 형식으로 파싱
-                    action_data = json.loads(parsed_command)
-                    print(f"\n[디버그] 파싱된 JSON:\n{json.dumps(action_data, indent=2, ensure_ascii=False)}")
+                if intent_data["intent"] == "notion_command":
+                    # Notion 관련 명령 처리
+                    parsed_command = self.openai_client.parse_notion_command(command)
+                    print(f"\n[디버그] 명령 분석 결과(원본):\n{parsed_command}")
                     
-                    # 명령에 따라 적절한 작업 수행
-                    action = action_data.get("action")
-                    print(f"\n[디버그] 감지된 작업: {action}")
+                    try:
+                        # JSON 형식으로 파싱
+                        action_data = json.loads(parsed_command)
+                        print(f"\n[디버그] 파싱된 JSON:\n{json.dumps(action_data, indent=2, ensure_ascii=False)}")
+                        
+                        # 명령에 따라 적절한 작업 수행
+                        action = action_data.get("action")
+                        print(f"\n[디버그] 감지된 작업: {action}")
+                        
+                        if action == "create_page":
+                            return self._create_page(action_data.get("parameters"))
+                        elif action == "create_database":
+                            return self._create_database(action_data.get("parameters"))
+                        elif action == "create_page_in_workspace":
+                            return self._create_page_in_workspace(action_data.get("parameters"))
+                        elif action == "update_page":
+                            return self._update_page(action_data.get("parameters"))
+                        elif action == "query_database":
+                            return self._query_database(action_data.get("parameters"))
+                        elif action == "get_databases":
+                            return self._get_databases()
+                        elif action == "generate_content":
+                            return self._generate_content(action_data.get("parameters"))
+                        else:
+                            return f"지원하지 않는 작업: {action}"
+                    except json.JSONDecodeError as e:
+                        print(f"\n[디버그] 명령 JSON 파싱 오류: {str(e)}")
+                        # 일반 대화로 처리
+                        response = self.openai_client.chat(command, self.conversation_history)
+                        return f"명령 형식 오류. 일반 응답으로 대체합니다: {response}"
+                else:
+                    # 일반 대화 처리
+                    response = self.openai_client.chat(command, self.conversation_history)
                     
-                    if action == "create_page":
-                        return self._create_page(action_data.get("parameters"))
-                    elif action == "create_database":
-                        return self._create_database(action_data.get("parameters"))
-                    elif action == "create_page_in_workspace":
-                        return self._create_page_in_workspace(action_data.get("parameters"))
-                    elif action == "update_page":
-                        return self._update_page(action_data.get("parameters"))
-                    elif action == "query_database":
-                        return self._query_database(action_data.get("parameters"))
-                    elif action == "get_databases":
-                        return self._get_databases()
-                    elif action == "generate_content":
-                        return self._generate_content(action_data.get("parameters"))
-                    else:
-                        return f"지원하지 않는 작업: {action}"
-                except json.JSONDecodeError as e:
-                    print(f"\n[디버그] JSON 파싱 오류: {str(e)}")
-                    return f"명령 분석 결과(JSON 변환 실패):\n{parsed_command}"
-            else:
-                # 일반 대화 처리
+                    # 대화 기록 업데이트
+                    self.conversation_history.append({"role": "user", "content": command})
+                    self.conversation_history.append({"role": "assistant", "content": response})
+                    
+                    # 대화 기록이 너무 길어지면 초기화
+                    if len(self.conversation_history) > 10:  # 최대 5개의 대화 쌍 유지
+                        self.conversation_history = []
+                    
+                    return response
+            except json.JSONDecodeError as e:
+                print(f"\n[디버그] 의도 JSON 파싱 오류: {str(e)}")
+                # 의도 분석이 실패하면 일반 대화로 처리
                 response = self.openai_client.chat(command, self.conversation_history)
                 
                 # 대화 기록 업데이트
                 self.conversation_history.append({"role": "user", "content": command})
                 self.conversation_history.append({"role": "assistant", "content": response})
                 
-                # 대화 기록이 너무 길어지면 초기화
-                if len(self.conversation_history) > 10:  # 최대 5개의 대화 쌍 유지
-                    self.conversation_history = []
-                
                 return response
+                
         except Exception as e:
+            print(f"\n[디버그] 전역 예외 발생: {str(e)}")
             return f"명령 처리 중 오류 발생: {str(e)}"
     
     def _create_database(self, parameters):

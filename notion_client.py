@@ -228,10 +228,43 @@ class NotionMCPClient:
         """워크스페이스에 새 페이지를 생성합니다 (데이터베이스 없이)."""
         url = f"{self.base_url}/pages"
         
+        # 먼저 최상위 페이지를 찾아서 그 아래에 새 페이지를 생성
+        url_search = f"{self.base_url}/search"
+        payload_search = {
+            "filter": {
+                "value": "page",
+                "property": "object"
+            },
+            "sort": {
+                "direction": "descending",
+                "timestamp": "last_edited_time"
+            },
+            "page_size": 10
+        }
+        
+        print(f"[노션 API 요청] 최상위 페이지 검색 POST {url_search}")
+        response_search = requests.post(url_search, headers=self.headers, json=payload_search)
+        print(f"[노션 API 응답] 상태 코드: {response_search.status_code}")
+        
+        parent_page_id = None
+        if response_search.status_code == 200:
+            search_results = response_search.json()
+            if 'results' in search_results and search_results['results']:
+                # 첫 번째 페이지를 부모로 선택
+                parent_page_id = search_results['results'][0]['id']
+                print(f"[노션 API] 부모 페이지를 찾았습니다: {parent_page_id}")
+            else:
+                print(f"[노션 API 오류] 사용 가능한 페이지를 찾을 수 없습니다.")
+                return {"error": "사용 가능한 페이지를 찾을 수 없습니다."}
+        else:
+            print(f"[노션 API 오류] 페이지 검색 실패: {response_search.text}")
+            return {"error": f"페이지 검색 실패: {response_search.text}"}
+        
+        # 페이지 생성 요청
         payload = {
             "parent": {
-                "type": "workspace",
-                "workspace": True
+                "type": "page_id",
+                "page_id": parent_page_id
             },
             "properties": {
                 "title": [

@@ -1,6 +1,8 @@
 import os
 from openai import AzureOpenAI
 from dotenv import load_dotenv
+import re
+import json
 
 # .env 파일에서 환경 변수 로드
 load_dotenv()
@@ -43,7 +45,9 @@ Notion 관련 키워드:
 응답: {"intent": "notion_command", "explanation": "Notion 데이터베이스 작업 요청"}
 
 입력: "오늘 날씨 어때?"
-응답: {"intent": "general_chat", "explanation": "일반적인 날씨 관련 질문"}"""
+응답: {"intent": "general_chat", "explanation": "일반적인 날씨 관련 질문"}
+
+중요: 반드시 위의 JSON 형식으로만 응답하고, 다른 텍스트나 설명은 추가하지 마세요."""
 
             response = self.client.chat.completions.create(
                 model=os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME"),
@@ -53,10 +57,31 @@ Notion 관련 키워드:
                 ],
                 temperature=0.3
             )
-            return response.choices[0].message.content
+            
+            result = response.choices[0].message.content.strip()
+            
+            # JSON 형식 검증
+            try:
+                # 응답 내용에서 JSON 부분만 추출 (가끔 모델이 다른 텍스트를 추가할 수 있음)
+                json_pattern = r'(\{.*\})'
+                json_match = re.search(json_pattern, result, re.DOTALL)
+                
+                if json_match:
+                    json_str = json_match.group(1)
+                    # 유효성 검사
+                    json.loads(json_str)
+                    return json_str
+                else:
+                    # JSON 아니면 기본값 반환
+                    return '{"intent": "general_chat", "explanation": "의도 분석 실패, 일반 대화로 처리"}'
+            except:
+                # JSON 파싱 오류 시 기본값 반환
+                return '{"intent": "general_chat", "explanation": "의도 분석 실패, 일반 대화로 처리"}'
+                
         except Exception as e:
-            return f"의도 분석 오류: {str(e)}"
-
+            print(f"의도 분석 오류: {str(e)}")
+            return '{"intent": "general_chat", "explanation": "오류 발생"}'
+            
     def chat(self, user_input, conversation_history=None):
         """일반적인 대화를 처리합니다."""
         try:
@@ -202,11 +227,54 @@ JSON 응답 형식은 다음과 같아야 합니다:
   "description": "작업에 대한 간단한 설명"
 }
 
-이 JSON만 반환하고 다른 설명은 추가하지 마세요."""
+중요: 반드시 유효한 JSON 형식으로만 응답하고, JSON 외에 다른 텍스트나 설명은 추가하지 마세요."""
             
             prompt = f"다음 사용자 명령을 노션 작업으로 변환해주세요: {command}"
             
             response = self.generate_text(prompt, system_prompt=system_prompt)
-            return response
+            
+            # JSON 형식 검증
+            try:
+                # 응답 내용에서 JSON 부분만 추출 (가끔 모델이 다른 텍스트를 추가할 수 있음)
+                json_pattern = r'(\{.*\})'
+                json_match = re.search(json_pattern, response, re.DOTALL)
+                
+                if json_match:
+                    json_str = json_match.group(1)
+                    # 유효성 검사
+                    json.loads(json_str)
+                    return json_str
+                else:
+                    # JSON 형식이 아니면 기본 응답 제공
+                    default_response = {
+                        "action": "create_page_in_workspace",
+                        "parameters": {
+                            "title": "새 페이지",
+                            "content_prompt": command
+                        },
+                        "description": "JSON 파싱 실패로 기본 작업 수행"
+                    }
+                    return json.dumps(default_response, ensure_ascii=False)
+            except:
+                # JSON 파싱 오류 시 기본값 반환
+                default_response = {
+                    "action": "create_page_in_workspace",
+                    "parameters": {
+                        "title": "새 페이지",
+                        "content_prompt": command
+                    },
+                    "description": "JSON 파싱 실패로 기본 작업 수행"
+                }
+                return json.dumps(default_response, ensure_ascii=False)
         except Exception as e:
-            return f"명령 분석 오류: {str(e)}" 
+            print(f"명령 파싱 오류: {str(e)}")
+            # 오류 발생 시 기본 응답 제공
+            default_response = {
+                "action": "create_page_in_workspace",
+                "parameters": {
+                    "title": "새 페이지",
+                    "content_prompt": command
+                },
+                "description": "오류로 인한 기본 작업 수행"
+            }
+            return json.dumps(default_response, ensure_ascii=False) 
