@@ -1,5 +1,5 @@
 import os
-import openai
+from openai import AzureOpenAI
 from dotenv import load_dotenv
 
 # .env 파일에서 환경 변수 로드
@@ -7,14 +7,18 @@ load_dotenv()
 
 class OpenAIMCPClient:
     def __init__(self, api_key=None):
-        """OpenAI API 클라이언트를 초기화합니다."""
+        """Azure OpenAI API 클라이언트를 초기화합니다."""
         # API 키를 인자로 받거나 환경 변수에서 가져옴
-        self.api_key = api_key or os.getenv("OPENAI_API_KEY")
+        self.api_key = api_key or os.getenv("AZURE_OPENAI_API_KEY")
         if not self.api_key:
-            raise ValueError("OpenAI API 키가 필요합니다.")
+            raise ValueError("Azure OpenAI API 키가 필요합니다.")
         
-        # OpenAI 클라이언트 설정 - 최신 방식으로 변경
-        self.client = openai.OpenAI(api_key=self.api_key)
+        # Azure OpenAI 클라이언트 설정
+        self.client = AzureOpenAI(
+            api_key=self.api_key,
+            api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-01"),
+            azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT")
+        )
     
     def analyze_intent(self, user_input):
         """사용자 입력의 의도를 분석합니다."""
@@ -42,7 +46,7 @@ Notion 관련 키워드:
 응답: {"intent": "general_chat", "explanation": "일반적인 날씨 관련 질문"}"""
 
             response = self.client.chat.completions.create(
-                model="gpt-3.5-turbo",
+                model=os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME"),
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_input}
@@ -68,7 +72,7 @@ Notion 관련 키워드:
             messages.append({"role": "user", "content": user_input})
             
             response = self.client.chat.completions.create(
-                model="gpt-3.5-turbo",
+                model=os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME"),
                 messages=messages,
                 temperature=0.7
             )
@@ -76,7 +80,7 @@ Notion 관련 키워드:
         except Exception as e:
             return f"대화 처리 오류: {str(e)}"
     
-    def generate_text(self, prompt, model="gpt-3.5-turbo", max_tokens=1000, temperature=0.7, system_prompt=None):
+    def generate_text(self, prompt, model=None, max_tokens=1000, temperature=0.7, system_prompt=None):
         """텍스트 생성 함수"""
         try:
             messages = []
@@ -88,7 +92,7 @@ Notion 관련 키워드:
             messages.append({"role": "user", "content": prompt})
             
             response = self.client.chat.completions.create(
-                model=model,
+                model=os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME"),
                 messages=messages,
                 max_tokens=max_tokens,
                 temperature=temperature
@@ -171,9 +175,23 @@ Notion 관련 키워드:
   "description": "데이터베이스에 새 페이지 생성"
 }
 
+데이터베이스 쿼리 시 필요한 매개변수 예시:
+{
+  "action": "query_database",
+  "parameters": {
+    "database_id": "데이터베이스 이름", // 데이터베이스의 정확한 ID 대신 이름을 사용
+    "filter": { // 선택 사항, 필터 조건
+      "property": "속성명",
+      "조건 타입": { "조건 값": "값" }
+    }
+  },
+  "description": "데이터베이스 내 항목 조회"
+}
+
 사용자가 "xx 데이터베이스 만들어줘"와 같이 요청하면 반드시 create_database 작업을 사용하세요.
 사용자가 그냥 페이지를 생성하려는 의도면 create_page_in_workspace 작업을 사용하세요.
 데이터베이스에 항목을 추가하려는 의도면 create_page 작업을 사용하세요.
+사용자가 데이터베이스 내용이나 항목을 보고 싶어하면 반드시 query_database 작업을 사용하세요.
 
 JSON 응답 형식은 다음과 같아야 합니다:
 {

@@ -422,7 +422,101 @@ class MCPController:
             
             filter_params = parameters.get("filter", {})
             result = self.notion_client.query_database(database_id, filter_params)
-            return f"데이터베이스 쿼리 완료: {len(result.get('results', []))}개 항목 찾음"
+            
+            # 상세 정보 추출
+            pages = result.get('results', [])
+            
+            if not pages:
+                return "데이터베이스에서 페이지를 찾을 수 없습니다."
+            
+            # 데이터베이스 정보 가져오기
+            db_info = self.notion_client.get_database(database_id)
+            db_name = "알 수 없음"
+            if 'title' in db_info:
+                for item in db_info['title']:
+                    if 'plain_text' in item:
+                        db_name = item['plain_text']
+                        break
+            
+            # 속성 정보 가져오기
+            properties_info = db_info.get('properties', {})
+            
+            # 결과 메시지 생성
+            response = [f"'{db_name}' 데이터베이스 조회 결과: {len(pages)}개의 페이지 찾음"]
+            
+            # 각 페이지 정보 추가
+            for i, page in enumerate(pages):
+                page_id = page.get('id', '알 수 없음')
+                page_url = page.get('url', '링크 없음')
+                
+                # 페이지 제목 찾기
+                page_title = "제목 없음"
+                for prop_name, prop_data in page.get('properties', {}).items():
+                    if prop_data.get('type') == 'title':
+                        title_array = prop_data.get('title', [])
+                        if title_array:
+                            texts = [item.get('plain_text', '') for item in title_array if 'plain_text' in item]
+                            page_title = ''.join(texts)
+                            break
+                
+                # 페이지 정보 문자열 생성
+                page_info = [f"\n{i+1}. {page_title} (ID: {page_id[:8]}...)"]
+                page_info.append(f"   링크: {page_url}")
+                
+                # 주요 속성 추가
+                for prop_name, prop_data in page.get('properties', {}).items():
+                    if prop_name == 'title' or prop_data.get('type') == 'title':
+                        continue  # 이미 제목은 위에서 추출했음
+                    
+                    prop_type = prop_data.get('type')
+                    prop_value = "값 없음"
+                    
+                    # 속성 타입에 따라 값 추출
+                    if prop_type == 'rich_text':
+                        texts = prop_data.get('rich_text', [])
+                        prop_value = ''.join([item.get('plain_text', '') for item in texts if 'plain_text' in item])
+                    elif prop_type == 'number':
+                        prop_value = prop_data.get('number', 0)
+                    elif prop_type == 'select':
+                        select_data = prop_data.get('select', {})
+                        prop_value = select_data.get('name', '') if select_data else ''
+                    elif prop_type == 'multi_select':
+                        multi_select = prop_data.get('multi_select', [])
+                        prop_value = ', '.join([item.get('name', '') for item in multi_select if 'name' in item])
+                    elif prop_type == 'date':
+                        date_data = prop_data.get('date', {})
+                        start_date = date_data.get('start', '') if date_data else ''
+                        end_date = date_data.get('end', '') if date_data else ''
+                        if start_date and end_date:
+                            prop_value = f"{start_date} ~ {end_date}"
+                        else:
+                            prop_value = start_date
+                    elif prop_type == 'checkbox':
+                        prop_value = "✅" if prop_data.get('checkbox') else "❌"
+                    elif prop_type == 'url':
+                        prop_value = prop_data.get('url', '')
+                    elif prop_type == 'email':
+                        prop_value = prop_data.get('email', '')
+                    elif prop_type == 'phone_number':
+                        prop_value = prop_data.get('phone_number', '')
+                    elif prop_type == 'formula':
+                        formula_data = prop_data.get('formula', {})
+                        if 'string' in formula_data:
+                            prop_value = formula_data.get('string', '')
+                        elif 'number' in formula_data:
+                            prop_value = str(formula_data.get('number', 0))
+                        elif 'boolean' in formula_data:
+                            prop_value = "✅" if formula_data.get('boolean') else "❌"
+                        elif 'date' in formula_data:
+                            date_data = formula_data.get('date', {})
+                            prop_value = date_data.get('start', '') if date_data else ''
+                    
+                    if prop_value and str(prop_value).strip():
+                        page_info.append(f"   {prop_name}: {prop_value}")
+                
+                response.append(''.join(page_info))
+            
+            return '\n'.join(response)
         except Exception as e:
             return f"데이터베이스 쿼리 중 오류 발생: {str(e)}"
     
