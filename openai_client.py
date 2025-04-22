@@ -206,8 +206,9 @@ Notion 관련 키워드:
   "parameters": {
     "database_id": "데이터베이스 이름", // 데이터베이스의 정확한 ID 대신 이름을 사용
     "filter": { // 선택 사항, 필터 조건
-      "property": "속성명",
-      "조건 타입": { "조건 값": "값" }
+      "property": "Name", // 검색할 속성 이름 (예: "Name", "Status" 등)
+      "equals": "검색어" // 정확히 일치하는 값 검색
+      // 또는 "contains": "검색어" // 포함된 값 검색
     }
   },
   "description": "데이터베이스 내 항목 조회"

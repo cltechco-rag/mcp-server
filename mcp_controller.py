@@ -437,7 +437,72 @@ class MCPController:
                     else:
                         return f"데이터베이스 '{db_name}'을 찾을 수 없습니다."
             
-            filter_params = parameters.get("filter", {})
+            # 데이터베이스 스키마 정보 가져오기
+            db_info = self.notion_client.get_database(database_id)
+            
+            # 필터 파라미터 형식 변환
+            filter_params = {}
+            if "filter" in parameters:
+                user_filter = parameters.get("filter", {})
+                
+                # 필터 형식 수정
+                if "property" in user_filter and any(key in user_filter for key in ["text", "equals", "contains"]):
+                    property_name = user_filter.get("property")
+                    
+                    # 해당 속성이 실제로 존재하는지 확인
+                    if 'properties' in db_info and property_name in db_info['properties']:
+                        # 속성이 존재하면 그대로 사용
+                        prop_type = db_info['properties'][property_name].get('type', 'rich_text')
+                    else:
+                        # 속성이 존재하지 않으면 타이틀 속성 찾기
+                        title_property = None
+                        for prop_name, prop_data in db_info.get('properties', {}).items():
+                            if prop_data.get('type') == 'title':
+                                title_property = prop_name
+                                prop_type = 'title'
+                                break
+                        
+                        if title_property:
+                            print(f"\n[디버그] 속성 '{property_name}'을 찾을 수 없어 타이틀 속성 '{title_property}'로 대체합니다.")
+                            property_name = title_property
+                        else:
+                            return f"데이터베이스에 타이틀 속성이 없습니다."
+                    
+                    # 필터 타입에 따라 올바른 형식으로 변환
+                    filter_obj = {"property": property_name}
+                    
+                    # 속성 타입에 따른 필터 객체 생성
+                    if "text" in user_filter:
+                        text_filter = user_filter["text"]
+                        if prop_type == "title":
+                            filter_obj["title"] = text_filter
+                        else:
+                            filter_obj["rich_text"] = text_filter
+                    elif "equals" in user_filter:
+                        equals_value = user_filter["equals"]
+                        if prop_type == "title":
+                            filter_obj["title"] = {"equals": equals_value}
+                        elif prop_type == "rich_text":
+                            filter_obj["rich_text"] = {"equals": equals_value}
+                        elif prop_type == "select":
+                            filter_obj["select"] = {"equals": equals_value}
+                        else:
+                            filter_obj[prop_type] = {"equals": equals_value}
+                    elif "contains" in user_filter:
+                        contains_value = user_filter["contains"]
+                        if prop_type == "title":
+                            filter_obj["title"] = {"contains": contains_value}
+                        elif prop_type == "rich_text":
+                            filter_obj["rich_text"] = {"contains": contains_value}
+                        else:
+                            filter_obj[prop_type] = {"contains": contains_value}
+                    
+                    filter_params = {"filter": filter_obj}
+                else:
+                    # 사용자가 제공한 필터가 이미 올바른 형식이면 그대로 사용
+                    filter_params = {"filter": user_filter}
+            
+            print(f"\n[디버그] 최종 필터 파라미터: {json.dumps(filter_params, indent=2, ensure_ascii=False)}")
             result = self.notion_client.query_database(database_id, filter_params)
             
             # 상세 정보 추출
@@ -447,42 +512,126 @@ class MCPController:
                 return "데이터베이스에서 페이지를 찾을 수 없습니다."
             
             # 데이터베이스 정보 가져오기
-            db_info = self.notion_client.get_database(database_id)
             db_name = "알 수 없음"
-            if 'title' in db_info:
-                for item in db_info['title']:
-                    if 'plain_text' in item:
-                        db_name = item['plain_text']
-                        break
-            
-            # 속성 정보 가져오기
-            properties_info = db_info.get('properties', {})
-            
+            title_property = None
+            for prop_name, prop_data in db_info.get('properties', {}).items():
+                if prop_data.get('type') == 'title':
+                    title_property = prop_name
+                    break
+                    
             # 결과 메시지 생성
             response = [f"'{db_name}' 데이터베이스 조회 결과: {len(pages)}개의 페이지 찾음"]
             
-            # 각 페이지 정보 추가
+            # 각 페이지 정보 및 내용 가져오기
             for i, page in enumerate(pages):
                 page_id = page.get('id', '알 수 없음')
                 page_url = page.get('url', '링크 없음')
                 
                 # 페이지 제목 찾기
                 page_title = "제목 없음"
-                for prop_name, prop_data in page.get('properties', {}).items():
-                    if prop_data.get('type') == 'title':
-                        title_array = prop_data.get('title', [])
+                if title_property and title_property in page.get('properties', {}):
+                    title_data = page['properties'][title_property]
+                    if title_data.get('type') == 'title':
+                        title_array = title_data.get('title', [])
                         if title_array:
                             texts = [item.get('plain_text', '') for item in title_array if 'plain_text' in item]
                             page_title = ''.join(texts)
-                            break
                 
                 # 페이지 정보 문자열 생성
                 page_info = [f"\n{i+1}. {page_title} (ID: {page_id[:8]}...)"]
                 page_info.append(f"   링크: {page_url}")
                 
+                # 페이지 내용(블록) 가져오기
+                try:
+                    # 페이지 블록 내용 가져오기
+                    print(f"\n[디버그] 페이지 {page_id}의 내용 가져오기")
+                    block_content = self.notion_client.get_block_children(page_id)
+                    
+                    if block_content and 'results' in block_content and block_content['results']:
+                        page_info.append(f"\n   📄 페이지 내용:")
+                        
+                        for block in block_content['results']:
+                            block_type = block.get('type')
+                            if block_type == 'paragraph':
+                                text_content = ""
+                                for rich_text in block.get('paragraph', {}).get('rich_text', []):
+                                    text_content += rich_text.get('plain_text', '')
+                                if text_content.strip():
+                                    page_info.append(f"   • {text_content}")
+                            elif block_type == 'heading_1':
+                                heading_text = ""
+                                for rich_text in block.get('heading_1', {}).get('rich_text', []):
+                                    heading_text += rich_text.get('plain_text', '')
+                                if heading_text.strip():
+                                    page_info.append(f"   # {heading_text}")
+                            elif block_type == 'heading_2':
+                                heading_text = ""
+                                for rich_text in block.get('heading_2', {}).get('rich_text', []):
+                                    heading_text += rich_text.get('plain_text', '')
+                                if heading_text.strip():
+                                    page_info.append(f"   ## {heading_text}")
+                            elif block_type == 'heading_3':
+                                heading_text = ""
+                                for rich_text in block.get('heading_3', {}).get('rich_text', []):
+                                    heading_text += rich_text.get('plain_text', '')
+                                if heading_text.strip():
+                                    page_info.append(f"   ### {heading_text}")
+                            elif block_type == 'bulleted_list_item':
+                                text_content = ""
+                                for rich_text in block.get('bulleted_list_item', {}).get('rich_text', []):
+                                    text_content += rich_text.get('plain_text', '')
+                                if text_content.strip():
+                                    page_info.append(f"   • {text_content}")
+                            elif block_type == 'numbered_list_item':
+                                text_content = ""
+                                for rich_text in block.get('numbered_list_item', {}).get('rich_text', []):
+                                    text_content += rich_text.get('plain_text', '')
+                                if text_content.strip():
+                                    page_info.append(f"   1. {text_content}")
+                            elif block_type == 'to_do':
+                                text_content = ""
+                                for rich_text in block.get('to_do', {}).get('rich_text', []):
+                                    text_content += rich_text.get('plain_text', '')
+                                is_checked = block.get('to_do', {}).get('checked', False)
+                                checkbox = "☑" if is_checked else "☐"
+                                if text_content.strip():
+                                    page_info.append(f"   {checkbox} {text_content}")
+                            elif block_type == 'code':
+                                code_content = ""
+                                for rich_text in block.get('code', {}).get('rich_text', []):
+                                    code_content += rich_text.get('plain_text', '')
+                                code_language = block.get('code', {}).get('language', '')
+                                if code_content.strip():
+                                    page_info.append(f"   ```{code_language}\n   {code_content}\n   ```")
+                            elif block_type == 'quote':
+                                text_content = ""
+                                for rich_text in block.get('quote', {}).get('rich_text', []):
+                                    text_content += rich_text.get('plain_text', '')
+                                if text_content.strip():
+                                    page_info.append(f"   > {text_content}")
+                            elif block_type == 'callout':
+                                text_content = ""
+                                for rich_text in block.get('callout', {}).get('rich_text', []):
+                                    text_content += rich_text.get('plain_text', '')
+                                emoji = block.get('callout', {}).get('icon', {}).get('emoji', '💡')
+                                if text_content.strip():
+                                    page_info.append(f"   {emoji} {text_content}")
+                            elif block_type == 'toggle':
+                                text_content = ""
+                                for rich_text in block.get('toggle', {}).get('rich_text', []):
+                                    text_content += rich_text.get('plain_text', '')
+                                if text_content.strip():
+                                    page_info.append(f"   ▶ {text_content}")
+                    else:
+                        page_info.append(f"\n   📄 페이지에 내용이 없습니다.")
+                except Exception as e:
+                    print(f"\n[디버그] 페이지 내용 가져오기 오류: {str(e)}")
+                    page_info.append(f"\n   ⚠️ 페이지 내용을 가져오는 중 오류가 발생했습니다: {str(e)}")
+                
                 # 주요 속성 추가
+                page_info.append("\n   📋 페이지 속성:")
                 for prop_name, prop_data in page.get('properties', {}).items():
-                    if prop_name == 'title' or prop_data.get('type') == 'title':
+                    if prop_name == title_property:
                         continue  # 이미 제목은 위에서 추출했음
                     
                     prop_type = prop_data.get('type')
@@ -529,12 +678,13 @@ class MCPController:
                             prop_value = date_data.get('start', '') if date_data else ''
                     
                     if prop_value and str(prop_value).strip():
-                        page_info.append(f"   {prop_name}: {prop_value}")
+                        page_info.append(f"   • {prop_name}: {prop_value}")
                 
                 response.append(''.join(page_info))
             
             return '\n'.join(response)
         except Exception as e:
+            print(f"\n[디버그] 데이터베이스 쿼리 중 오류 발생: {str(e)}")
             return f"데이터베이스 쿼리 중 오류 발생: {str(e)}"
     
     def _get_databases(self):

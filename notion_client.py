@@ -104,8 +104,22 @@ class NotionMCPClient:
         
         if response.status_code != 200:
             print(f"[노션 API 오류] {response.text}")
+            return response.json()
             
-        return response.json()
+        result = response.json()
+        
+        # 디버깅: 데이터베이스 속성 확인
+        if 'properties' in result:
+            print(f"[노션 API] 데이터베이스 속성 정보:")
+            for prop_name, prop_data in result['properties'].items():
+                prop_type = prop_data.get('type', '알 수 없음')
+                print(f"  - {prop_name} (타입: {prop_type})")
+                
+                # 타이틀 속성 특별 표시
+                if prop_type == 'title':
+                    print(f"    [타이틀 속성]")
+        
+        return result
     
     def create_database(self, parent_page_id, title, properties=None):
         """새 데이터베이스를 생성합니다."""
