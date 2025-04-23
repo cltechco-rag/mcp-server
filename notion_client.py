@@ -281,14 +281,16 @@ class NotionMCPClient:
                 "page_id": parent_page_id
             },
             "properties": {
-                "title": [
-                    {
-                        "type": "text",
-                        "text": {
-                            "content": title
+                "title": {
+                    "title": [
+                        {
+                            "type": "text",
+                            "text": {
+                                "content": title
+                            }
                         }
-                    }
-                ]
+                    ]
+                }
             }
         }
         
@@ -311,6 +313,121 @@ class NotionMCPClient:
             print(f"[노션 API 오류] {response.text}")
             
         return response.json()
+    
+    def create_page_in_root_workspace(self, title, icon=None, children=None):
+        """워크스페이스 루트에 새 페이지를 생성합니다."""
+        url = f"{self.base_url}/pages"
+        
+        # 먼저 사용 가능한 데이터베이스를 찾기
+        databases = self.get_databases()
+        if 'results' in databases and databases['results']:
+            # 첫 번째 데이터베이스를 사용
+            database_id = databases['results'][0]['id']
+            
+            # 페이지 생성 요청
+            payload = {
+                "parent": {
+                    "database_id": database_id
+                },
+                "properties": {
+                    "title": {
+                        "title": [
+                            {
+                                "type": "text",
+                                "text": {
+                                    "content": title
+                                }
+                            }
+                        ]
+                    }
+                }
+            }
+            
+            if icon:
+                if icon.startswith("http"):
+                    payload["icon"] = {"type": "external", "external": {"url": icon}}
+                else:
+                    payload["icon"] = {"type": "emoji", "emoji": icon}
+            
+            if children:
+                payload["children"] = children
+                
+            print(f"[노션 API 요청] 데이터베이스 {database_id}에 페이지 생성 POST {url}")
+            print(f"[노션 API 요청 본문] {json.dumps(payload, ensure_ascii=False)[:500]}...")
+            
+            response = requests.post(url, headers=self.headers, json=payload)
+            print(f"[노션 API 응답] 상태 코드: {response.status_code}")
+            
+            if response.status_code != 200:
+                print(f"[노션 API 오류] {response.text}")
+                return {"error": f"페이지 생성 실패: {response.text}"}
+                
+            return response.json()
+        else:
+            # 데이터베이스가 없으면 최상위 페이지 찾기
+            url_search = f"{self.base_url}/search"
+            payload_search = {
+                "filter": {
+                    "value": "page",
+                    "property": "object"
+                },
+                "sort": {
+                    "direction": "descending",
+                    "timestamp": "last_edited_time"
+                }
+            }
+            
+            response_search = requests.post(url_search, headers=self.headers, json=payload_search)
+            
+            if response_search.status_code == 200:
+                search_results = response_search.json()
+                if 'results' in search_results and search_results['results']:
+                    # 첫 번째 페이지를 부모로 사용
+                    parent_id = search_results['results'][0]['id']
+                    
+                    # 페이지 생성 요청
+                    payload = {
+                        "parent": {
+                            "page_id": parent_id
+                        },
+                        "properties": {
+                            "title": {
+                                "title": [
+                                    {
+                                        "type": "text",
+                                        "text": {
+                                            "content": title
+                                        }
+                                    }
+                                ]
+                            }
+                        }
+                    }
+                    
+                    if icon:
+                        if icon.startswith("http"):
+                            payload["icon"] = {"type": "external", "external": {"url": icon}}
+                        else:
+                            payload["icon"] = {"type": "emoji", "emoji": icon}
+                    
+                    if children:
+                        payload["children"] = children
+                        
+                    print(f"[노션 API 요청] 페이지 {parent_id}에 하위 페이지 생성 POST {url}")
+                    print(f"[노션 API 요청 본문] {json.dumps(payload, ensure_ascii=False)[:500]}...")
+                    
+                    response = requests.post(url, headers=self.headers, json=payload)
+                    print(f"[노션 API 응답] 상태 코드: {response.status_code}")
+                    
+                    if response.status_code != 200:
+                        print(f"[노션 API 오류] {response.text}")
+                        return {"error": f"페이지 생성 실패: {response.text}"}
+                        
+                    return response.json()
+                else:
+                    return {"error": "페이지를 생성할 수 있는 부모 페이지나 데이터베이스를 찾을 수 없습니다."}
+            else:
+                return {"error": f"페이지 검색 중 오류 발생: {response_search.text}"}
     
     def update_page(self, page_id, properties):
         """페이지를 업데이트합니다."""
@@ -371,17 +488,23 @@ class NotionMCPClient:
         return response.json()
     
     def search(self, query="", filter_params=None, sort_params=None):
-        """노션 내 객체를 검색합니다."""
+        """노션 데이터베이스/페이지를 검색합니다."""
         url = f"{self.base_url}/search"
         
         payload = {}
+        
+        # 검색어 설정
         if query:
             payload["query"] = query
+            
+        # 필터 파라미터 설정
         if filter_params:
             payload["filter"] = filter_params
+            
+        # 정렬 파라미터 설정
         if sort_params:
             payload["sort"] = sort_params
-            
+        
         print(f"[노션 API 요청] POST {url}")
         print(f"[노션 API 요청 본문] {json.dumps(payload, ensure_ascii=False)}")
         
@@ -391,4 +514,28 @@ class NotionMCPClient:
         if response.status_code != 200:
             print(f"[노션 API 오류] {response.text}")
             
-        return response.json() 
+        return response.json()
+    
+    def archive_page(self, page_id):
+        """노션 페이지를 아카이브(삭제)합니다."""
+        url = f"{self.base_url}/pages/{page_id}"
+        
+        payload = {
+            "archived": True
+        }
+        
+        print(f"[노션 API 요청] PATCH {url}")
+        print(f"[노션 API 요청 본문] {json.dumps(payload, ensure_ascii=False)}")
+        
+        response = requests.patch(url, headers=self.headers, json=payload)
+        print(f"[노션 API 응답] 상태 코드: {response.status_code}")
+        
+        if response.status_code != 200:
+            print(f"[노션 API 오류] {response.text}")
+        
+        return response.json()
+    
+    def get_current_time(self):
+        """현재 시간을 포맷팅하여 반환합니다."""
+        from datetime import datetime
+        return datetime.now().strftime("%Y-%m-%d %H:%M:%S") 

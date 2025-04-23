@@ -440,6 +440,15 @@ class MCPController:
             # 데이터베이스 스키마 정보 가져오기
             db_info = self.notion_client.get_database(database_id)
             
+            # 데이터베이스 이름 가져오기
+            db_name = "알 수 없음"
+            if 'title' in db_info:
+                title_items = db_info.get('title', [])
+                if title_items:
+                    title_texts = [item.get('plain_text', '') for item in title_items if 'plain_text' in item]
+                    if title_texts:
+                        db_name = ''.join(title_texts)
+            
             # 필터 파라미터 형식 변환
             filter_params = {}
             if "filter" in parameters:
@@ -510,14 +519,6 @@ class MCPController:
             
             if not pages:
                 return "데이터베이스에서 페이지를 찾을 수 없습니다."
-            
-            # 데이터베이스 정보 가져오기
-            db_name = "알 수 없음"
-            title_property = None
-            for prop_name, prop_data in db_info.get('properties', {}).items():
-                if prop_data.get('type') == 'title':
-                    title_property = prop_name
-                    break
                     
             # 결과 메시지 생성
             response = [f"'{db_name}' 데이터베이스 조회 결과: {len(pages)}개의 페이지 찾음"]
@@ -529,13 +530,13 @@ class MCPController:
                 
                 # 페이지 제목 찾기
                 page_title = "제목 없음"
-                if title_property and title_property in page.get('properties', {}):
-                    title_data = page['properties'][title_property]
-                    if title_data.get('type') == 'title':
-                        title_array = title_data.get('title', [])
+                for prop_name, prop_data in page.get('properties', {}).items():
+                    if prop_data.get('type') == 'title':
+                        title_array = prop_data.get('title', [])
                         if title_array:
                             texts = [item.get('plain_text', '') for item in title_array if 'plain_text' in item]
                             page_title = ''.join(texts)
+                            break
                 
                 # 페이지 정보 문자열 생성
                 page_info = [f"\n{i+1}. {page_title} (ID: {page_id[:8]}...)"]
@@ -631,7 +632,7 @@ class MCPController:
                 # 주요 속성 추가
                 page_info.append("\n   📋 페이지 속성:")
                 for prop_name, prop_data in page.get('properties', {}).items():
-                    if prop_name == title_property:
+                    if prop_data.get('type') == 'title':
                         continue  # 이미 제목은 위에서 추출했음
                     
                     prop_type = prop_data.get('type')
@@ -688,29 +689,221 @@ class MCPController:
             return f"데이터베이스 쿼리 중 오류 발생: {str(e)}"
     
     def _get_databases(self):
-        """사용 가능한 데이터베이스 목록을 가져옵니다."""
+        """사용 가능한 데이터베이스 목록을 반환합니다."""
         try:
-            result = self.notion_client.get_databases()
-            databases = result.get("results", [])
+            response = self.notion_client.search(query="", filter={"property": "object", "value": "database"})
+            results = response.get('results', [])
             
-            # 데이터베이스 정보 출력
-            if databases:
-                db_info = ["사용 가능한 데이터베이스:"]
-                for db in databases:
-                    title = self.notion_client._extract_title_from_database(db)
-                    db_info.append(f"- {title} (ID: {db['id']})")
-                return "\n".join(db_info)
-            else:
-                return "사용 가능한 데이터베이스가 없습니다."
+            databases = []
+            for db in results:
+                title = "제목 없음"
+                title_property = db.get('title', [])
+                if title_property and len(title_property) > 0:
+                    title = title_property[0].get('plain_text', "제목 없음")
+                databases.append({
+                    "id": db.get('id'),
+                    "title": title,
+                    "url": db.get('url')
+                })
+            
+            return databases
         except Exception as e:
-            return f"데이터베이스 목록 가져오기 중 오류 발생: {str(e)}"
+            return f"데이터베이스 목록 조회 중 오류 발생: {str(e)}"
     
     def _generate_content(self, parameters):
-        """OpenAI로 콘텐츠를 생성합니다."""
+        """OpenAI를 사용하여 콘텐츠를 생성합니다."""
         try:
-            prompt = parameters.get("prompt", "")
+            prompt = parameters.get("prompt")
             content_type = parameters.get("content_type", "text")
+            
+            if not prompt:
+                return "콘텐츠 생성을 위한 프롬프트가 필요합니다."
+            
             content = self.openai_client.generate_notion_content(prompt, content_type)
             return content
         except Exception as e:
-            return f"콘텐츠 생성 중 오류 발생: {str(e)}" 
+            return f"콘텐츠 생성 중 오류 발생: {str(e)}"
+    
+    def save_summary(self, title, summary, metadata=None):
+        """영상 요약 정보를 노션 페이지로 저장합니다.
+        
+        Args:
+            title (str): 요약 페이지의 제목
+            summary (str): 요약 내용
+            metadata (dict, optional): 요약 관련 메타데이터 (출처 URL, 작성자, 태그 등)
+        """
+        try:
+            print(f"\n[디버그] 요약 정보 저장: 제목 '{title}', 요약 길이: {len(summary)} 자")
+            if metadata:
+                print(f"\n[디버그] 메타데이터: {json.dumps(metadata, ensure_ascii=False)}")
+            
+            # 콘텐츠 블록 생성
+            children = []
+            
+            # 요약 정보 헤더 추가
+            children.append({
+                "object": "block", 
+                "type": "heading_1",
+                "heading_1": {
+                    "rich_text": [{"type": "text", "text": {"content": "영상 요약 정보"}}]
+                }
+            })
+            
+            # 메타데이터가 있으면 추가
+            if metadata:
+                # 소스 URL이 있으면 링크 추가
+                source_url = metadata.get('source_url')
+                if source_url:
+                    children.append({
+                        "object": "block", 
+                        "type": "paragraph",
+                        "paragraph": {
+                            "rich_text": [
+                                {"type": "text", "text": {"content": "출처: "}},
+                                {"type": "text", "text": {"content": source_url, "link": {"url": source_url}}}
+                            ]
+                        }
+                    })
+                
+                # 작성자 정보가 있으면 추가
+                author = metadata.get('author')
+                if author:
+                    children.append({
+                        "object": "block", 
+                        "type": "paragraph",
+                        "paragraph": {
+                            "rich_text": [{"type": "text", "text": {"content": f"작성자: {author}"}}]
+                        }
+                    })
+                
+                # 태그 정보가 있으면 추가
+                tags = metadata.get('tags', [])
+                if tags:
+                    tags_text = ', '.join(tags)
+                    children.append({
+                        "object": "block", 
+                        "type": "paragraph",
+                        "paragraph": {
+                            "rich_text": [{"type": "text", "text": {"content": f"태그: {tags_text}"}}]
+                        }
+                    })
+                
+                # 생성 시간 정보가 있으면 추가
+                created_at = metadata.get('created_at')
+                if created_at:
+                    children.append({
+                        "object": "block", 
+                        "type": "paragraph",
+                        "paragraph": {
+                            "rich_text": [{"type": "text", "text": {"content": f"생성 시간: {created_at}"}}]
+                        }
+                    })
+                
+                # 구분선 추가
+                children.append({
+                    "object": "block", 
+                    "type": "divider",
+                    "divider": {}
+                })
+            
+            # 줄바꿈이 있으면 단락으로 나누기
+            paragraphs = summary.split("\n")
+            for paragraph in paragraphs:
+                if paragraph.strip():
+                    children.append({
+                        "object": "block", 
+                        "type": "paragraph",
+                        "paragraph": {
+                            "rich_text": [{"type": "text", "text": {"content": paragraph}}]
+                        }
+                    })
+            
+            # 상태 메타데이터 추가
+            children.append({
+                "object": "block", 
+                "type": "divider",
+                "divider": {}
+            })
+            
+            children.append({
+                "object": "block", 
+                "type": "paragraph",
+                "paragraph": {
+                    "rich_text": [{"type": "text", "text": {"content": f"저장 시간: {self.notion_client.get_current_time()}"}}]
+                }
+            })
+            
+            # 페이지 생성 (루트 워크스페이스에 저장)
+            response = self.notion_client.create_page_in_root_workspace(title, "📝", children)
+            
+            if 'id' in response:
+                page_url = response.get('url', '')
+                return f"'{title}' 제목으로 요약 정보가 성공적으로 저장되었습니다.\n링크: {page_url}"
+            else:
+                return f"요약 정보 저장 실패: {response}"
+        except Exception as e:
+            print(f"\n[디버그] 요약 정보 저장 중 오류: {str(e)}")
+            return f"요약 정보 저장 중 오류 발생: {str(e)}"
+    
+    def delete_page(self, page_name):
+        """특정 이름의 노션 페이지를 찾아 삭제합니다."""
+        try:
+            print(f"\n[디버그] 페이지 삭제 요청: '{page_name}'")
+            
+            # 페이지 이름으로 검색
+            response = self.notion_client.search(query=page_name)
+            results = response.get('results', [])
+            
+            if not results:
+                return f"'{page_name}' 이름의 페이지를 찾을 수 없습니다."
+            
+            # 찾은 페이지 중 첫 번째 페이지 선택
+            page_to_delete = None
+            matched_pages = []
+            
+            for result in results:
+                # 페이지만 필터링
+                if result.get('object') == 'page':
+                    # 페이지 제목 확인
+                    page_title = "제목 없음"
+                    
+                    # 데이터베이스 내의 페이지인 경우
+                    if 'properties' in result and 'title' in result['properties']:
+                        title_data = result['properties']['title']
+                        if 'title' in title_data:
+                            title_array = title_data['title']
+                            if title_array:
+                                page_title = ''.join([text.get('plain_text', '') for text in title_array if 'plain_text' in text])
+                    
+                    # 워크스페이스 루트 페이지인 경우
+                    elif 'parent' in result and 'workspace' in result['parent'] and 'properties' in result:
+                        for prop_name, prop_data in result['properties'].items():
+                            if prop_data.get('type') == 'title':
+                                title_array = prop_data.get('title', [])
+                                if title_array:
+                                    page_title = ''.join([text.get('plain_text', '') for text in title_array if 'plain_text' in text])
+                                    break
+                    
+                    # 페이지 제목과 검색어 비교
+                    if page_name.lower() in page_title.lower():
+                        matched_pages.append({
+                            'id': result['id'],
+                            'title': page_title,
+                            'url': result.get('url', '링크 없음')
+                        })
+            
+            if not matched_pages:
+                return f"'{page_name}' 이름과 일치하는 페이지를 찾을 수 없습니다."
+            
+            # 첫 번째 일치하는 페이지 삭제
+            page_to_delete = matched_pages[0]
+            response = self.notion_client.archive_page(page_to_delete['id'])
+            
+            if response and 'archived' in response and response['archived']:
+                return f"'{page_to_delete['title']}' 페이지를 성공적으로 삭제했습니다."
+            else:
+                return f"페이지 삭제 실패: {response}"
+                
+        except Exception as e:
+            print(f"\n[디버그] 페이지 삭제 중 오류: {str(e)}")
+            return f"페이지 삭제 중 오류 발생: {str(e)}" 
